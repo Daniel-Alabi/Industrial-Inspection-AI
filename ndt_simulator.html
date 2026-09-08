@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NDT Bench — physics-based inspection simulator</title>
+<style>
+:root{
+  --bg:#1b2229; --panel:#222b34; --panel2:#283440; --line:#344252; --line2:#43536a;
+  --ink:#e6ebef; --muted:#8c9aa8; --dim:#5f6d7c;
+  --trace:#f5b54a; --geom:#7fd1e8; --flaw:#ff7a59; --ok:#7ad38f; --warn:#f5b54a; --bad:#ff6b6b;
+  --sans:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 var(--sans);font-variant-numeric:tabular-nums}
+header{display:flex;align-items:baseline;gap:16px;padding:10px 18px;border-bottom:1px solid var(--line);background:var(--panel)}
+header h1{margin:0;font-size:16px;font-weight:600}
+header p{margin:0;color:var(--muted);font-size:12px}
+.layout{display:grid;grid-template-columns:340px minmax(0,1fr);height:calc(100vh - 43px)}
+aside{border-right:1px solid var(--line);overflow-y:auto;padding:12px 14px 30px}
+main{overflow-y:auto;padding:12px 14px 30px;display:grid;grid-template-columns:1fr 1fr;gap:12px;align-content:start}
+.wide{grid-column:1/-1}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:10px 12px}
+.panel h2{margin:0 0 8px;font-size:12.5px;font-weight:600;color:var(--ink)}
+.panel h2 small{color:var(--muted);font-weight:400;margin-left:6px}
+aside section{margin-bottom:14px}
+aside h2{font-size:12.5px;font-weight:600;margin:0 0 6px;padding-bottom:4px;border-bottom:1px solid var(--line)}
+label{display:block;color:var(--muted);font-size:12px;margin:6px 0 2px}
+select,input[type=number],input[type=text]{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line2);border-radius:3px;padding:5px 7px;font:inherit}
+select:focus,input:focus,button:focus{outline:2px solid var(--geom);outline-offset:1px}
+input[type=range]{width:100%;accent-color:var(--trace);margin:2px 0 0}
+.row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.rng{display:flex;justify-content:space-between;align-items:baseline}
+.rng output{color:var(--ink);font-size:12px}
+.props{color:var(--muted);font-size:11.5px;margin-top:6px;line-height:1.5}
+.props b{color:var(--ink);font-weight:500}
+button{background:var(--panel2);color:var(--ink);border:1px solid var(--line2);border-radius:3px;padding:5px 9px;font:inherit;cursor:pointer}
+button:hover{border-color:var(--geom)}
+button.primary{background:#2f4d5c;border-color:#3f6d80}
+button.danger{color:var(--bad)}
+.flaw{border:1px solid var(--line);border-left:3px solid var(--flaw);border-radius:3px;padding:7px 9px;margin:8px 0;background:var(--panel)}
+.flaw.sel{border-color:var(--geom);border-left-color:var(--geom)}
+.flaw .head{display:flex;justify-content:space-between;align-items:center;gap:6px}
+.flaw .head select{width:auto;flex:1}
+.flaw .head button{padding:2px 7px}
+.flaw label{margin-top:4px}
+.flaw .hint{font-size:11px;color:var(--muted);margin-top:4px}
+canvas{display:block;width:100%;background:#151b21;border-radius:3px}
+.readout{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px 14px;font-size:12px}
+.readout div span{color:var(--muted)}
+.readout div b{font-weight:500;color:var(--ink)}
+.notes{margin:0;padding:0;list-style:none;font-size:12px}
+.notes li{padding:3px 0 3px 18px;position:relative}
+.notes li::before{content:"";position:absolute;left:4px;top:9px;width:7px;height:7px;border-radius:50%;background:var(--muted)}
+.notes li.warn::before{background:var(--warn)} .notes li.bad::before{background:var(--bad)} .notes li.ok::before{background:var(--ok)}
+details{font-size:12px;color:var(--muted)} details summary{cursor:pointer;color:var(--ink)} details p{margin:6px 0}
+.legend{font-size:11.5px;color:var(--muted);margin-top:6px}
+@media (max-width:980px){.layout{grid-template-columns:1fr;height:auto}aside{border-right:0;border-bottom:1px solid var(--line)}main{grid-template-columns:1fr}.wide{grid-column:auto}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <h1>NDT Bench</h1>
+  <p>Physics-based simulator for ultrasonic, eddy-current, radiographic, magnetic-particle and penetrant testing. Drag the probe or a flaw on the plan view.</p>
+</header>
+<div class="layout">
+<aside>
+  <section>
+    <h2>Technique</h2>
+    <select id="technique">
+      <option value="UT">Ultrasonic testing — normal-beam pulse echo</option>
+      <option value="ECT">Eddy-current testing — absolute pancake coil</option>
+      <option value="RT">Radiographic testing — X-ray transmission</option>
+      <option value="MT">Magnetic-particle testing — yoke</option>
+      <option value="PT">Liquid-penetrant testing</option>
+    </select>
+    <div id="techPanel"></div>
+  </section>
+  <section>
+    <h2>Material</h2>
+    <select id="material"></select>
+    <div class="props" id="matProps"></div>
+  </section>
+  <section>
+    <h2>Part dimensions <small style="color:var(--muted);font-weight:400">mm, plate</small></h2>
+    <div class="row">
+      <div><label>Length X</label><input type="number" id="dimLx" min="10" max="1000" step="1"></div>
+      <div><label>Width Y</label><input type="number" id="dimLy" min="10" max="1000" step="1"></div>
+      <div><label>Thickness</label><input type="number" id="dimT" min="1" max="300" step="0.5"></div>
+    </div>
+  </section>
+  <section>
+    <h2>Probe / scan position <small style="color:var(--muted);font-weight:400">mm</small></h2>
+    <div class="row2">
+      <div><label>X</label><input type="number" id="scanX" step="0.5"></div>
+      <div><label>Y (section line)</label><input type="number" id="scanY" step="0.5"></div>
+    </div>
+  </section>
+  <section>
+    <h2>Imperfections</h2>
+    <div class="row2">
+      <select id="newFlawType">
+        <option value="crack">Crack (planar)</option>
+        <option value="void">Void / gas pore</option>
+        <option value="incl">Inclusion</option>
+        <option value="wallLoss">Wall loss (back face)</option>
+      </select>
+      <button class="primary" id="addFlaw">Add flaw</button>
+    </div>
+    <div id="flawList"></div>
+  </section>
+  <section>
+    <details>
+      <summary>Physics models and limits</summary>
+      <div id="physicsNotes"></div>
+    </details>
+  </section>
+</aside>
+<main>
+  <div class="panel"><h2>Plan view <small id="planHint"></small></h2><canvas id="cvTop" height="260"></canvas></div>
+  <div class="panel"><h2>Section at Y <small id="sideHint"></small></h2><canvas id="cvSide" height="260"></canvas></div>
+  <div class="panel wide"><h2 id="primTitle">—</h2><canvas id="cvPrim" height="300"></canvas><div class="legend" id="primLegend"></div></div>
+  <div class="panel wide"><h2 id="secTitle">—</h2><canvas id="cvSec" height="230"></canvas><div class="legend" id="secLegend"></div></div>
+  <div class="panel wide"><h2>Readouts</h2><div class="readout" id="readout"></div></div>
+  <div class="panel wide"><h2>Assessment</h2><ul class="notes" id="notes"></ul></div>
+</main>
+</div>
+
+<script>
+'use strict';
+/* =========================================================
+   Data
+   ========================================================= */
+const MU0 = 4e-7*Math.PI, LN2 = Math.LN2, PI = Math.PI;
+const D2R = PI/180;
+
+// Photon mass-attenuation coefficients μ/ρ [cm²/g], NIST XCOM (total, with coherent), log-log interpolated.
+const XCOM_E = [60,80,100,150,200,300,400,500];
+const XCOM = {
+  Fe:[1.205,0.5952,0.3717,0.1964,0.1460,0.1099,0.09400,0.08414],
+  Al:[0.2778,0.2018,0.1704,0.1378,0.1223,0.1042,0.09276,0.08445],
+  Cu:[1.593,0.7630,0.4584,0.2217,0.1559,0.1119,0.09413,0.08362],
+  Ti:[0.7661,0.4052,0.2721,0.1649,0.1314,0.1043,0.09081,0.08191],
+  Ni:[1.560,0.7280,0.4440,0.2250,0.1580,0.1140,0.09570,0.08500],
+  Mg:[0.2222,0.1730,0.1508,0.1245,0.1113,0.09497,0.08497,0.07747],
+  C:[0.1753,0.1610,0.1514,0.1347,0.1229,0.1066,0.09546,0.08715],
+  PE:[0.2050,0.1880,0.1770,0.1580,0.1440,0.1250,0.1120,0.1020],
+  W:[7.810,7.810,4.438,1.581,0.7844,0.3238,0.1925,0.1378] // K-edge 69.5 keV; below 80 keV clamped to 80 keV value
+};
+function muRho(key,E){
+  const a=XCOM[key]; E=Math.min(500,Math.max(60,E));
+  let i=0; while(i<XCOM_E.length-2 && E>XCOM_E[i+1]) i++;
+  const x0=Math.log(XCOM_E[i]),x1=Math.log(XCOM_E[i+1]),y0=Math.log(a[i]),y1=Math.log(a[i+1]);
+  return Math.exp(y0+(y1-y0)*(Math.log(E)-x0)/(x1-x0));
+}
+
+// rho kg/m³, cL/cT m/s (longitudinal / shear), sigma S/m, mur relative permeability (incremental, for eddy currents),
+// att5 = ultrasonic attenuation at 5 MHz in dB/mm (scaled ∝ f² — scattering regime)
+const MATERIALS = [
+  {id:'steel',   name:'Carbon steel (AISI 1020)',        rho:7850, cL:5920, cT:3230, sigma:5.9e6, mur:100,  ferro:true,  att5:0.02,  xcom:'Fe'},
+  {id:'ss304',   name:'Stainless steel 304 (austenitic)', rho:7900, cL:5790, cT:3100, sigma:1.45e6,mur:1.02, ferro:false, att5:0.08,  xcom:'Fe'},
+  {id:'castiron',name:'Grey cast iron',                   rho:7200, cL:4600, cT:2800, sigma:9.0e5, mur:60,   ferro:true,  att5:0.25,  xcom:'Fe'},
+  {id:'al6061',  name:'Aluminium 6061-T6',                rho:2700, cL:6320, cT:3130, sigma:2.5e7, mur:1,    ferro:false, att5:0.005, xcom:'Al'},
+  {id:'ti64',    name:'Titanium Ti-6Al-4V',               rho:4430, cL:6070, cT:3125, sigma:5.8e5, mur:1,    ferro:false, att5:0.03,  xcom:'Ti'},
+  {id:'cu',      name:'Copper (annealed)',                rho:8960, cL:4700, cT:2260, sigma:5.96e7,mur:1,    ferro:false, att5:0.05,  xcom:'Cu'},
+  {id:'in718',   name:'Inconel 718',                      rho:8190, cL:5820, cT:3020, sigma:8.0e5, mur:1,    ferro:false, att5:0.06,  xcom:'Ni'},
+  {id:'mg',      name:'Magnesium AZ31B',                  rho:1770, cL:5770, cT:3050, sigma:1.0e7, mur:1,    ferro:false, att5:0.01,  xcom:'Mg'},
+  {id:'cfrp',    name:'CFRP quasi-isotropic laminate',    rho:1600, cL:3000, cT:1500, sigma:1e4,   mur:1,    ferro:false, att5:0.8,   xcom:'C'},
+  {id:'hdpe',    name:'HDPE (polyethylene)',              rho:950,  cL:2400, cT:950,  sigma:1e-15, mur:1,    ferro:false, att5:1.2,   xcom:'PE'},
+];
+const INCL = {
+  tungsten:{name:'Tungsten (dense)', rho:19300, c:5180, sigma:1.8e7, xcom:'W'},
+  slag:    {name:'Oxide slag (≈Al₂O₃)', rho:2800, c:5500, sigma:0, xcom:'Al'}
+};
+
+/* =========================================================
+   State
+   ========================================================= */
+let fid=0;
+const state = {
+  technique:'UT', matId:'steel',
+  dims:{Lx:200, Ly:100, T:25},
+  scan:{px:90, py:50},
+  sel:null,
+  flaws:[
+    {id:++fid,type:'crack',x:40,y:50,z:0,L:8,H:3,w:0.05,az:90,tilt:90},
+    {id:++fid,type:'void',x:90,y:50,z:12,D:2},
+    {id:++fid,type:'incl',x:130,y:60,z:8,D:1.5,imat:'tungsten'},
+    {id:++fid,type:'crack',x:160,y:40,z:10,L:12,H:8,w:0.05,az:0,tilt:0},
+    {id:++fid,type:'wallLoss',x:110,y:30,d:20,h:6},
+  ],
+  ut:{f:5, D:10, mode:'L', gain:0, rect:true, bscan:true},
+  ect:{logf:5, Dc:6, lift:0.1, wobble:0.02},
+  rt:{E:150, logN:4, F:1.0, SOD:700},
+  mt:{dir:'X', cur:'AC'},
+};
+const MAT = ()=>MATERIALS.find(m=>m.id===state.matId);
+const $ = id=>document.getElementById(id);
+
+/* =========================================================
+   Small utilities
+   ========================================================= */
+function clamp(v,a,b){return Math.min(b,Math.max(a,v));}
+function fmt(v,d=2){return Number.isFinite(v)?(Math.abs(v)>=1e4||(Math.abs(v)<1e-3&&v!==0)?v.toExponential(d):v.toFixed(d)):'—';}
+function fmtHz(f){return f>=1e6?fmt(f/1e6,2)+' MHz':f>=1e3?fmt(f/1e3,1)+' kHz':fmt(f,0)+' Hz';}
+function rng(seed){ // xorshift32 + Box–Muller
+  let s=(seed>>>0)||123456789;
+  const u=()=>{s^=s<<13;s>>>=0;s^=s>>>17;s^=s<<5;s>>>=0;return (s>>>0)/4294967296;};
+  return {u, g(){let a=u()||1e-9,b=u();return Math.sqrt(-2*Math.log(a))*Math.cos(2*PI*b);}};
+}
+function distPointSeg(px,py,ax,ay,bx,by){
+  const dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy;
+  let t=l2>0?((px-ax)*dx+(py-ay)*dy)/l2:0; t=clamp(t,0,1);
+  return Math.hypot(px-(ax+t*dx),py-(ay+t*dy));
+}
+function fitCanvas(cv){
+  const dpr=window.devicePixelRatio||1, w=cv.clientWidth||600, h=parseInt(cv.getAttribute('height'),10);
+  if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);}
+  const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,h);
+  ctx.fillStyle='#151b21'; ctx.fillRect(0,0,w,h);
+  ctx.textAlign='left'; ctx.textBaseline='alphabetic'; ctx.lineWidth=1; ctx.setLineDash([]); ctx.globalAlpha=1; ctx.font='11px '+getComputedStyle(document.body).fontFamily;
+  return {ctx,w,h};
+}
+
+/* =========================================================
+   Flaw geometry
+   ========================================================= */
+function footprint(fl){
+  if(fl.type==='crack'){
+    const az=fl.az*D2R, th=fl.tilt*D2R;
+    const Wf=fl.H*Math.abs(Math.cos(th))+fl.w*Math.abs(Math.sin(th)); // plan-view width of the crack footprint
+    const hx=Math.cos(az)*fl.L/2, hy=Math.sin(az)*fl.L/2;
+    return {seg:true, ax:fl.x-hx, ay:fl.y-hy, bx:fl.x+hx, by:fl.y+hy, halfW:Wf/2, Wf, area:fl.L*Wf,
+            xExt:fl.L*Math.abs(Math.cos(az))+Wf*Math.abs(Math.sin(az)), yExt:fl.L*Math.abs(Math.sin(az))+Wf*Math.abs(Math.cos(az))};
+  }
+  const r=(fl.type==='wallLoss'?fl.d:fl.D)/2;
+  return {seg:false, cx:fl.x, cy:fl.y, r, area:PI*r*r, xExt:2*r, yExt:2*r};
+}
+function effOff(fl,px,py){ // lateral distance from a point to the flaw footprint (0 if inside)
+  const f=footprint(fl);
+  if(f.seg) return Math.max(0, distPointSeg(px,py,f.ax,f.ay,f.bx,f.by)-f.halfW);
+  return Math.max(0, Math.hypot(px-f.cx,py-f.cy)-f.r);
+}
+function depthRange(fl,T){ // [z1,z2] from the top surface
+  if(fl.type==='crack'){const z2=fl.z+Math.max(fl.w,fl.H*Math.abs(Math.sin(fl.tilt*D2R)));return [fl.z,z2];}
+  if(fl.type==='wallLoss') return [T-fl.h,T];
+  return [fl.z-fl.D/2, fl.z+fl.D/2];
+}
+function flawLabel(fl,i){
+  const n={crack:'Crack',void:'Void',incl:'Inclusion',wallLoss:'Wall loss'}[fl.type];
+  return `${i+1}. ${n}`;
+}
+function flawIssues(fl){ // geometric validity vs the part
+  const {Lx,Ly,T}=state.dims, out=[]; const f=footprint(fl);
+  if(fl.x-f.xExt/2<0||fl.x+f.xExt/2>Lx||fl.y-f.yExt/2<0||fl.y+f.yExt/2>Ly) out.push('extends outside the part in plan');
+  const [z1,z2]=depthRange(fl,T);
+  if(z1<0||z2>T) out.push('extends outside the thickness');
+  return out;
+}
+function intersectsSection(fl,py){const f=footprint(fl);return Math.abs(fl.y-py)<=f.yExt/2+0.5;}
+
+/* =========================================================
+   Ultrasonic testing — normal-beam pulse echo
+   Field model: piston transducer, near-field length N = D²/4λ, −6 dB half angle sin θ = 0.51 λ/D.
+   DGS-type amplitudes: plane reflector ∝ N/x (x ≥ N), disc reflector ∝ (N/x)·A/(λx), sphere ∝ (N/x)·D/(4x).
+   Pressure reflection coefficient R = (Z₂−Z₁)/(Z₂+Z₁); −1 for air-backed faces.
+   ========================================================= */
+function utParams(){
+  const m=MAT(), p=state.ut;
+  const c=(p.mode==='T'?m.cT:m.cL)/1000;           // mm/µs
+  const lam=c/p.f;                                   // mm
+  const N=p.D*p.D/(4*lam);                           // mm
+  const thetaB=Math.asin(Math.min(1,0.51*lam/p.D));  // rad, −6 dB half angle
+  const alpha=m.att5*Math.pow(p.f/5,2)*(p.mode==='T'?1.6:1); // dB/mm (shear scatters more strongly)
+  const Z=m.rho*c*1000/1e6;                          // MRayl
+  const sigmaT=0.6247/p.f;                           // µs — Gaussian envelope for 60 % (−6 dB) fractional bandwidth
+  return {c,lam,N,thetaB,alpha,Z,sigmaT};
+}
+function computeAscan(px,py,n,withNoise){
+  const P=utParams(), p=state.ut, m=MAT(), T=state.dims.T;
+  const tBW=2*T/P.c, tMax=tBW*2.4+P.sigmaT*8, dt=tMax/n;
+  const sig=new Float32Array(n), echoes=[];
+  const addEcho=(t,amp,sc=1,label=null)=>{
+    const s=P.sigmaT*sc, half=4*s;
+    const i0=Math.max(0,Math.floor((t-half)/dt)), i1=Math.min(n-1,Math.ceil((t+half)/dt));
+    for(let i=i0;i<=i1;i++){const tau=i*dt-t; sig[i]+=amp*Math.exp(-tau*tau/(2*s*s))*Math.cos(2*PI*p.f*tau);}
+    if(label) echoes.push({t,amp,label});
+  };
+  const att=path=>Math.pow(10,-P.alpha*path/20);
+  const beamR=z=>p.D/2+Math.max(0,z-P.N)*Math.tan(P.thetaB);
+  const plane=x=>Math.min(1,P.N/Math.max(x,1e-6));
+  addEcho(0,4.0,2.2);                                    // initial pulse (main bang) with ring-down
+  let shadow=0, wlCover=0;
+  const flawInfo=[];
+  for(const fl of state.flaws){
+    const f=footprint(fl), off=effOff(fl,px,py), Zh=P.Z;
+    if(fl.type==='wallLoss'){
+      const dist=Math.hypot(px-fl.x,py-fl.y), rB=beamR(T);
+      const w=Math.pow(2,-Math.pow(off/rB,2));
+      const cov=Math.min(1,f.area/(PI*rB*rB))*w;
+      const hLoc=fl.h*Math.max(0,1-Math.pow(Math.min(dist,f.r)/f.r,2));   // paraboloid pit profile
+      const x=T-hLoc;
+      if(cov>1e-3&&hLoc>0){ addEcho(2*x/P.c,-cov*plane(x)*att(2*x),1,`wall loss`); wlCover=1-(1-wlCover)*(1-cov); }
+      flawInfo.push({fl,inBeam:w>0.05,x,ampdB:cov>1e-6?20*Math.log10(cov*plane(x)*att(2*x)):-99,w,note:''});
+      continue;
+    }
+    const [z1,z2]=depthRange(fl,T), x=(z1+z2)/2;
+    if(x<=0||x>=T) continue;
+    const rB=beamR(x), w=Math.pow(2,-Math.pow(off/rB,2));
+    let g=0, R=-1, note='';
+    if(fl.type==='crack'){
+      const th=fl.tilt*D2R;
+      const spec=Math.exp(-LN2*Math.pow(th/P.thetaB,2));   // specular loss when the face is tilted away from the beam
+      const Aface=fl.L*fl.H*Math.abs(Math.cos(th));
+      const Aedge=fl.L*(fl.w+0.1*P.lam)*Math.abs(Math.sin(th)); // edge / tip-diffracted contribution
+      g=(Aface*spec+Aedge)/(P.lam*x);
+      if(spec<0.1&&fl.tilt>0) note='face tilted out of the beam: only tip-diffracted energy returns';
+    }else{
+      g=fl.D/(4*x);
+      if(fl.type==='incl'){const im=INCL[fl.imat];const Zi=im.rho*im.c/1e6;R=(Zi-Zh)/(Zi+Zh);}
+    }
+    g=Math.min(1,g);
+    const amp=plane(x)*g*R*att(2*x)*w;
+    if(Math.abs(amp)>1e-5) addEcho(2*x/P.c,amp,1,flawLabel(fl,state.flaws.indexOf(fl)));
+    const frac=Math.min(1,f.area/(PI*rB*rB))*w; shadow=1-(1-shadow)*(1-frac);
+    const tEcho=2*x/P.c;
+    if(tEcho<P.sigmaT*2.2*4.5) note='inside the dead zone — merges with the initial pulse';
+    if(w<0.05) note='outside the sound beam at this probe position';
+    flawInfo.push({fl,inBeam:w>=0.05,x,ampdB:Math.abs(amp)>1e-9?20*Math.log10(Math.abs(amp)):-99,w,note,R});
+  }
+  for(let k=1;k<=4;k++){                                   // back-wall echo train
+    const x=k*T, t=2*x/P.c; if(t>tMax) break;
+    const amp=Math.pow(-1,k)*Math.pow(0.9,k-1)*plane(x)*att(2*x)*Math.pow((1-shadow)*(1-wlCover),k);
+    addEcho(t,amp,1,k===1?'back wall':`BW${k}`);
+  }
+  if(withNoise){                                          // grain (backscatter) noise + electronic noise
+    const r=rng(Math.round(px*97+py*131+7)), kLen=Math.ceil(P.sigmaT*6/dt), kern=new Float32Array(kLen);
+    let ks=0; for(let i=0;i<kLen;i++){const tau=(i-kLen/2)*dt;kern[i]=Math.exp(-tau*tau/(2*P.sigmaT*P.sigmaT))*Math.cos(2*PI*p.f*tau);ks+=kern[i]*kern[i];}
+    ks=Math.sqrt(ks)||1;
+    const white=new Float32Array(n); for(let i=0;i<n;i++) white[i]=r.g();
+    const gLev=Math.min(0.25,0.001+0.15*P.alpha);
+    for(let i=0;i<n;i++){
+      let acc=0; for(let j=0;j<kLen;j++){const q=i-j+(kLen>>1); if(q>=0&&q<n) acc+=white[q]*kern[j];}
+      const z=i*dt*P.c/2;
+      sig[i]+=acc/ks*gLev*att(2*z)+0.002*r.g();
+    }
+  }
+  return {sig,dt,tMax,echoes,flawInfo,P};
+}
+
+/* =========================================================
+   Eddy-current testing — absolute pancake coil
+   δ = 1/√(π f μ₀ μr σ). Flaw response ∝ ∫ e^{−2(1+i)z/δ} dz over the flaw's depth extent
+   (field attenuates and lags once inbound, once outbound). Display: lift-off horizontal, shallow surface flaw vertical,
+   deeper flaws rotate clockwise — the standard calibrated impedance-plane presentation.
+   ========================================================= */
+const ECT_K=30;
+function ectParams(){
+  const m=MAT(), p=state.ect, f=Math.pow(10,p.logf);
+  const applicable=m.sigma>1e3;
+  const delta=applicable?1000/Math.sqrt(PI*f*MU0*m.mur*m.sigma):Infinity;
+  return {f,delta,applicable,liftSens:Math.exp(-p.lift/(0.25*p.Dc))};
+}
+function depthIntegral(z1,z2,delta){ // (E1−E2)(1−i)/4 = S/δ, dimensionless complex
+  const e=z=>{const a=Math.exp(-2*z/delta),ph=2*z/delta;return [a*Math.cos(ph),-a*Math.sin(ph)];};
+  const E1=e(Math.max(0,z1)), E2=isFinite(z2)?e(z2):[0,0];
+  const dr=E1[0]-E2[0], di=E1[1]-E2[1];
+  return [(dr+di)/4,(di-dr)/4]; // (dr+i·di)(1−i)/4
+}
+function ectSignal(px,py,Q){ // returns [x,y] plotted point (arbitrary % units)
+  const m=MAT(), p=state.ect, {Lx,Ly,T}=state.dims;
+  let re=0, im=0, edge=0;
+  for(const fl of state.flaws){
+    const f=footprint(fl), off=effOff(fl,px,py);
+    const w=Math.pow(2,-Math.pow(off/(p.Dc/2),2)); if(w<1e-4) continue;
+    const [z1,z2]=depthRange(fl,T);
+    let lat, S, contrast=1;
+    if(fl.type==='wallLoss'){ lat=Math.min(fl.d,p.Dc)/p.Dc; S=depthIntegral(z1,Infinity,Q.delta); }
+    else{
+      lat=Math.min(fl.type==='crack'?fl.L:fl.D,p.Dc)/p.Dc;
+      S=depthIntegral(z1,z2,Q.delta);
+      if(fl.type==='incl'){const si=INCL[fl.imat].sigma; contrast=(m.sigma-si)/Math.max(m.sigma,si);}
+    }
+    re+=ECT_K*lat*w*contrast*S[0]; im+=ECT_K*lat*w*contrast*S[1];
+  }
+  const dE=Math.min(px,Lx-px,py,Ly-py);
+  if(dE<p.Dc) edge=ECT_K*1.5*Math.pow(1-dE/p.Dc,2);        // edge effect, lift-off-like direction
+  const s=Q.liftSens;
+  return [(-im)*s-edge, re*s];                              // lag rotates clockwise from vertical
+}
+function ectScan(Q){
+  const {Lx}=state.dims, py=state.scan.py, p=state.ect, m=MAT(), n=320;
+  const r=rng(4242), xs=new Float32Array(n), ys=new Float32Array(n), X=new Float32Array(n);
+  const wob=new Float32Array(n), perm=new Float32Array(n);
+  for(let i=0;i<n;i++){wob[i]=r.g();perm[i]=r.g();}
+  const sm=a=>a.map((v,i)=>((a[i-1]??v)+v+(a[i+1]??v))/3);
+  const wobS=sm(sm(wob)), permS=sm(sm(perm));
+  for(let i=0;i<n;i++){
+    const px=p.Dc+(i+0.5)/n*Math.max(1,Lx-2*p.Dc); X[i]=px;
+    const [x,y]=ectSignal(px,py,Q);
+    const lo=ECT_K*1.2*(1-Math.exp(-Math.abs(p.wobble*wobS[i])/(0.15*p.Dc)))*Math.sign(wobS[i]);
+    const pn=m.ferro?ECT_K*0.04*permS[i]:0;
+    xs[i]=x-lo; ys[i]=y+pn;
+  }
+  return {X,xs,ys};
+}
+
+/* =========================================================
+   Radiographic testing — Beer–Lambert transmission through the thickness map,
+   geometric unsharpness Ug = F·ODD/SOD, Poisson (photon) noise; film convention: more exposure = darker.
+   ========================================================= */
+function rtCompute(){
+  const m=MAT(), {Lx,Ly,T}=state.dims, p=state.rt;
+  const pix=Math.max(0.05,Math.max(Lx,Ly)/420);
+  const nx=Math.max(2,Math.round(Lx/pix)), ny=Math.max(2,Math.round(Ly/pix));
+  const muH=muRho(m.xcom,p.E)*m.rho/1e3/10;                // 1/mm
+  const mut=new Float32Array(nx*ny).fill(muH*T);
+  const flawC=[];
+  for(const fl of state.flaws){
+    const f=footprint(fl);
+    const i0=clamp(Math.floor((fl.x-f.xExt/2)/pix)-1,0,nx-1), i1=clamp(Math.ceil((fl.x+f.xExt/2)/pix)+1,0,nx-1);
+    const j0=clamp(Math.floor((fl.y-f.yExt/2)/pix)-1,0,ny-1), j1=clamp(Math.ceil((fl.y+f.yExt/2)/pix)+1,0,ny-1);
+    let peak=0, dmu=-muH, path=0;
+    if(fl.type==='incl'){const im=INCL[fl.imat]; dmu=muRho(im.xcom,p.E)*im.rho/1e3/10-muH;}
+    if(fl.type==='crack'){
+      const az=fl.az*D2R, ca=Math.cos(az), sa=Math.sin(az);
+      const Wf=f.Wf, band=Math.max(Wf,pix), cover=Math.min(1,Wf/pix);
+      path=fl.H*fl.w/Wf;                                        // mean vertical path through the crack opening
+      for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){
+        const xm=(i+0.5)*pix-fl.x, ym=(j+0.5)*pix-fl.y;
+        const u=xm*ca+ym*sa, v=-xm*sa+ym*ca;
+        if(Math.abs(u)<=fl.L/2&&Math.abs(v)<=band/2){const d=dmu*path*cover; mut[j*nx+i]+=d; peak=Math.max(peak,Math.abs(d));}
+      }
+    }else if(fl.type==='wallLoss'){
+      for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){
+        const r2=Math.pow((i+0.5)*pix-fl.x,2)+Math.pow((j+0.5)*pix-fl.y,2);
+        if(r2<f.r*f.r){const d=dmu*fl.h*(1-r2/(f.r*f.r)); mut[j*nx+i]+=d; peak=Math.max(peak,Math.abs(d));}
+      }
+    }else{
+      for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){
+        const r2=Math.pow((i+0.5)*pix-fl.x,2)+Math.pow((j+0.5)*pix-fl.y,2);
+        if(r2<f.r*f.r){const d=dmu*2*Math.sqrt(f.r*f.r-r2); mut[j*nx+i]+=d; peak=Math.max(peak,Math.abs(d));}
+      }
+    }
+    flawC.push({fl,contrast:100*(1-Math.exp(-peak))});          // peak subject contrast, %
+  }
+  let trans=new Float32Array(nx*ny); for(let k=0;k<trans.length;k++) trans[k]=Math.exp(-mut[k]);
+  const Ug=p.F*T/p.SOD, sig=(0.5*Ug+0.05)/pix;                 // blur σ in pixels (unsharpness + detector)
+  if(sig>0.3){
+    const rad=Math.ceil(3*sig), kern=[]; let ks=0;
+    for(let k=-rad;k<=rad;k++){const v=Math.exp(-k*k/(2*sig*sig));kern.push(v);ks+=v;}
+    for(let k=0;k<kern.length;k++) kern[k]/=ks;
+    const tmp=new Float32Array(nx*ny);
+    for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){let a=0;for(let k=-rad;k<=rad;k++){const ii=clamp(i+k,0,nx-1);a+=trans[j*nx+ii]*kern[k+rad];}tmp[j*nx+i]=a;}
+    for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){let a=0;for(let k=-rad;k<=rad;k++){const jj=clamp(j+k,0,ny-1);a+=tmp[jj*nx+i]*kern[k+rad];}trans[j*nx+i]=a;}
+  }
+  const N0=Math.pow(10,p.logN), r=rng(777), logN=new Float32Array(nx*ny);
+  let lo=Infinity, hi=-Infinity;
+  for(let k=0;k<trans.length;k++){const c=Math.log10(Math.max(N0*trans[k],1e-3));lo=Math.min(lo,c);hi=Math.max(hi,c);}
+  for(let k=0;k<trans.length;k++){const Nk=N0*trans[k];const s=Math.max(0,Nk+Math.sqrt(Nk)*r.g());logN[k]=Math.log10(Math.max(s,0.5));}
+  if(hi-lo<0.12){const c=(hi+lo)/2;lo=c-0.06;hi=c+0.06;} lo-=0.02; hi+=0.02;
+  const Tnom=Math.exp(-muH*T);
+  return {nx,ny,pix,logN,lo,hi,muH,Ug,Tnom,noisePct:100/Math.sqrt(Math.max(1,N0*Tnom)),flawC};
+}
+
+/* =========================================================
+   Magnetic-particle and penetrant — leakage / bleed-out indication models
+   ========================================================= */
+function mtIndication(fl){
+  const m=MAT(), p=state.mt, T=state.dims.T;
+  if(!m.ferro) return {vis:0,reason:'material is not ferromagnetic'};
+  const [z1]=depthRange(fl,T);
+  const depthScale=p.cur==='AC'?0.8:2.5;                       // mm: AC is surface-only, half-wave DC reaches deeper
+  const sub=Math.exp(-Math.max(0,z1)/depthScale);
+  let orient=1, reason='';
+  if(fl.type==='crack'){
+    const fieldAng=p.dir==='X'?0:90;
+    orient=Math.abs(Math.sin((fl.az-fieldAng)*D2R));            // flux must cross the crack
+    if(orient<0.3) reason='crack lies nearly parallel to the flux — no leakage field';
+    if(fl.tilt<20) {orient*=0.15; reason='laminar flaw does not interrupt the flux';}
+  }
+  if(fl.type==='wallLoss') return {vis:0,reason:'back-face wall loss: no leakage at the inspected surface'};
+  const [zz1,zz2]=depthRange(fl,T);
+  const size=Math.min(1,(zz2-zz1)/1.5);
+  const vis=orient*sub*size;
+  if(sub<0.2) reason=`too deep for MT (${fmt(z1,1)} mm below the surface)`;
+  return {vis,reason};
+}
+function ptIndication(fl){
+  const T=state.dims.T;
+  if(fl.type==='wallLoss') return {vis:0,reason:'back-face flaw — inspect from the other side'};
+  const [z1]=depthRange(fl,T);
+  if(z1>0.001) return {vis:0,reason:'not surface-breaking — penetrant cannot enter'};
+  const vol=fl.type==='crack'?fl.L*fl.H*fl.w:PI*Math.pow(fl.D,3)/6;
+  const len=fl.type==='crack'?fl.L:fl.D;
+  const bleed=clamp(0.2+6*Math.sqrt(vol/Math.max(len,0.1)),0.2,4);   // mm bleed-out width
+  return {vis:1,bleed};
+}
+
+/* =========================================================
+   Drawing helpers
+   ========================================================= */
+function planMap(w,h,pad=26){
+  const {Lx,Ly}=state.dims, s=Math.min((w-2*pad)/Lx,(h-2*pad)/Ly);
+  const ox=(w-Lx*s)/2, oy=(h-Ly*s)/2;
+  return {s,ox,oy,X:x=>ox+x*s,Y:y=>oy+y*s};
+}
+function drawPartFrame(ctx,M,w,h){
+  const {Lx,Ly}=state.dims;
+  ctx.fillStyle='#1f2830'; ctx.fillRect(M.X(0),M.Y(0),Lx*M.s,Ly*M.s);
+  ctx.strokeStyle='#4a5a6d'; ctx.lineWidth=1; ctx.strokeRect(M.X(0)+0.5,M.Y(0)+0.5,Lx*M.s,Ly*M.s);
+  ctx.fillStyle='#8c9aa8'; ctx.font='11px '+getComputedStyle(document.body).fontFamily; ctx.textAlign='center';
+  const step=Lx>400?100:Lx>150?50:Lx>60?20:10;
+  ctx.strokeStyle='#2a3542';
+  for(let x=0;x<=Lx;x+=step){ctx.beginPath();ctx.moveTo(M.X(x),M.Y(0));ctx.lineTo(M.X(x),M.Y(Ly));ctx.stroke();ctx.fillText(x,M.X(x),M.Y(Ly)+14);}
+  ctx.textAlign='right';
+  const stepY=Ly>400?100:Ly>150?50:Ly>60?20:10;
+  for(let y=0;y<=Ly;y+=stepY){ctx.beginPath();ctx.moveTo(M.X(0),M.Y(y));ctx.lineTo(M.X(Lx),M.Y(y));ctx.stroke();ctx.fillText(y,M.X(0)-4,M.Y(y)+4);}
+}
+function flawColor(fl){return fl.type==='incl'?'#b48cff':fl.type==='wallLoss'?'#6fc3ff':fl.type==='void'?'#ffd166':'#ff7a59';}
+function drawFlawPlan(ctx,M,fl,i){
+  const f=footprint(fl), col=flawColor(fl), sel=state.sel===fl.id;
+  ctx.save(); ctx.strokeStyle=col; ctx.fillStyle=col; ctx.lineWidth=sel?2.5:1.5;
+  if(f.seg){
+    ctx.beginPath(); ctx.moveTo(M.X(f.ax),M.Y(f.ay)); ctx.lineTo(M.X(f.bx),M.Y(f.by)); ctx.stroke();
+    if(f.Wf*M.s>2){ctx.globalAlpha=0.25;ctx.lineWidth=f.Wf*M.s;ctx.stroke();ctx.globalAlpha=1;}
+  }else{
+    ctx.beginPath(); ctx.arc(M.X(f.cx),M.Y(f.cy),Math.max(2,f.r*M.s),0,2*PI);
+    if(fl.type==='wallLoss'){ctx.setLineDash([4,3]);ctx.stroke();}else{ctx.globalAlpha=0.35;ctx.fill();ctx.globalAlpha=1;ctx.stroke();}
+  }
+  ctx.setLineDash([]); ctx.font='11px '+getComputedStyle(document.body).fontFamily; ctx.textAlign='left'; ctx.fillStyle=col;
+  ctx.fillText(String(i+1),M.X(fl.x)+Math.max(6,f.xExt/2*M.s+3),M.Y(fl.y)-4);
+  if(sel){ctx.strokeStyle='#7fd1e8';ctx.setLineDash([3,3]);ctx.strokeRect(M.X(fl.x-f.xExt/2)-4,M.Y(fl.y-f.yExt/2)-4,f.xExt*M.s+8,f.yExt*M.s+8);}
+  ctx.restore();
+}
+function drawTop(){
+  const cv=$('cvTop'), {ctx,w,h}=fitCanvas(cv), M=planMap(w,h), {Lx,Ly}=state.dims, tech=state.technique;
+  drawPartFrame(ctx,M,w,h);
+  state.flaws.forEach((fl,i)=>drawFlawPlan(ctx,M,fl,i));
+  // section line
+  ctx.save(); ctx.strokeStyle='#7fd1e8'; ctx.setLineDash([6,4]); ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(M.X(0),M.Y(state.scan.py)); ctx.lineTo(M.X(Lx),M.Y(state.scan.py)); ctx.stroke(); ctx.restore();
+  const {px,py}=state.scan;
+  if(tech==='UT'||tech==='ECT'){
+    const D=tech==='UT'?state.ut.D:state.ect.Dc;
+    ctx.save(); ctx.strokeStyle='#f5b54a'; ctx.fillStyle='rgba(245,181,74,0.18)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(M.X(px),M.Y(py),Math.max(4,D/2*M.s),0,2*PI); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(M.X(px)-8,M.Y(py)); ctx.lineTo(M.X(px)+8,M.Y(py)); ctx.moveTo(M.X(px),M.Y(py)-8); ctx.lineTo(M.X(px),M.Y(py)+8); ctx.stroke(); ctx.restore();
+  }
+  if(tech==='MT'){ // yoke legs
+    ctx.save(); ctx.fillStyle='#f5b54a'; const dir=state.mt.dir;
+    const legs=dir==='X'?[[px-Math.min(40,Lx*0.3),py],[px+Math.min(40,Lx*0.3),py]]:[[px,py-Math.min(40,Ly*0.3)],[px,py+Math.min(40,Ly*0.3)]];
+    for(const [lx,ly] of legs){ctx.fillRect(M.X(lx)-6,M.Y(ly)-6,12,12);}
+    ctx.strokeStyle='rgba(245,181,74,0.5)'; ctx.setLineDash([3,4]);
+    for(let k=-2;k<=2;k++){ctx.beginPath();
+      if(dir==='X'){ctx.moveTo(M.X(legs[0][0]),M.Y(py)+k*9);ctx.lineTo(M.X(legs[1][0]),M.Y(py)+k*9);}
+      else{ctx.moveTo(M.X(px)+k*9,M.Y(legs[0][1]));ctx.lineTo(M.X(px)+k*9,M.Y(legs[1][1]));}
+      ctx.stroke();}
+    ctx.restore();
+  }
+  $('planHint').textContent=`${Lx} × ${Ly} mm — probe at (${fmt(px,1)}, ${fmt(py,1)})`;
+}
+function drawSide(){
+  const cv=$('cvSide'), {ctx,w,h}=fitCanvas(cv), {Lx,T}=state.dims, py=state.scan.py, tech=state.technique;
+  const pad=26, sx=(w-2*pad)/Lx, sz=Math.min((h-2*pad-10)/T, sx*4), ox=(w-Lx*sx)/2, oz=pad+8;
+  const X=x=>ox+x*sx, Z=z=>oz+z*sz;
+  ctx.fillStyle='#1f2830'; ctx.fillRect(X(0),Z(0),Lx*sx,T*sz);
+  ctx.strokeStyle='#4a5a6d'; ctx.strokeRect(X(0)+0.5,Z(0)+0.5,Lx*sx,T*sz);
+  ctx.fillStyle='#8c9aa8'; ctx.font='11px '+getComputedStyle(document.body).fontFamily; ctx.textAlign='right';
+  ctx.fillText('0',X(0)-4,Z(0)+4); ctx.fillText(fmt(T,1),X(0)-4,Z(T)+4); ctx.textAlign='left'; ctx.fillText('mm',X(0)-24,Z(T/2));
+  // technique overlays
+  if(tech==='UT'){
+    const P=utParams(), {px}=state.scan, D=state.ut.D;
+    ctx.save(); ctx.fillStyle='rgba(245,181,74,0.18)'; ctx.beginPath();
+    const zN=Math.min(P.N,T*1.05), rEnd=D/2+Math.max(0,T-P.N)*Math.tan(P.thetaB);
+    ctx.moveTo(X(px-D/2),Z(0)); ctx.lineTo(X(px+D/2),Z(0)); ctx.lineTo(X(px+D/2),Z(zN));
+    if(P.N<T){ctx.lineTo(X(px+rEnd),Z(T));ctx.lineTo(X(px-rEnd),Z(T));}
+    ctx.lineTo(X(px-D/2),Z(zN)); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#f5b54a'; ctx.fillRect(X(px-D/2),Z(0)-7,D*sx,6);
+    if(P.N<T){ctx.strokeStyle='rgba(245,181,74,0.6)';ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(X(px-D/2-3),Z(P.N));ctx.lineTo(X(px+D/2+3),Z(P.N));ctx.stroke();ctx.fillText('N',X(px+D/2)+5,Z(P.N)+4);}
+    ctx.restore();
+  }else if(tech==='ECT'){
+    const Q=ectParams(), {px}=state.scan, Dc=state.ect.Dc;
+    if(Q.applicable){
+      ctx.save(); const g=ctx.createLinearGradient(0,Z(0),0,Z(Math.min(T,3*Q.delta)));
+      g.addColorStop(0,'rgba(245,181,74,0.45)'); g.addColorStop(1,'rgba(245,181,74,0)');
+      ctx.fillStyle=g; ctx.fillRect(X(0),Z(0),Lx*sx,Math.max(1,Math.min(T,3*Q.delta)*sz));
+      ctx.fillStyle='#f5b54a'; ctx.fillRect(X(px-Dc/2),Z(0)-7,Dc*sx,6); ctx.restore();
+    }
+  }else if(tech==='RT'){
+    ctx.save(); ctx.strokeStyle='rgba(245,181,74,0.5)'; ctx.setLineDash([2,4]);
+    for(let k=0;k<=8;k++){const x=k/8*Lx;ctx.beginPath();ctx.moveTo(X(x),Z(0)-14);ctx.lineTo(X(x),Z(T)+6);ctx.stroke();}
+    ctx.restore(); ctx.fillStyle='#8c9aa8'; ctx.fillText('source above, detector on the back face',X(0),Z(T)+18);
+  }
+  // flaws
+  state.flaws.forEach((fl,i)=>{
+    const on=intersectsSection(fl,py), col=flawColor(fl), f=footprint(fl);
+    ctx.save(); ctx.globalAlpha=on?1:0.25; ctx.fillStyle=col; ctx.strokeStyle=col; ctx.lineWidth=state.sel===fl.id?2.5:1.5;
+    const [z1,z2]=depthRange(fl,T);
+    if(fl.type==='wallLoss'){
+      ctx.beginPath(); ctx.moveTo(X(fl.x-f.r),Z(T));
+      for(let k=0;k<=24;k++){const u=-1+k/12;ctx.lineTo(X(fl.x+u*f.r),Z(T-fl.h*(1-u*u)));}
+      ctx.closePath(); ctx.fillStyle='#151b21'; ctx.fill(); ctx.stroke();
+    }else if(fl.type==='crack'){
+      const ex=Math.max(0.6/sx,f.xExt);
+      ctx.fillRect(X(fl.x-ex/2),Z(z1),ex*sx,Math.max(1.5,(z2-z1)*sz));
+    }else{
+      ctx.beginPath(); ctx.ellipse(X(fl.x),Z(fl.z),Math.max(2,fl.D/2*sx),Math.max(2,fl.D/2*sz),0,0,2*PI); ctx.fill();
+    }
+    ctx.fillStyle=col; ctx.fillText(String(i+1),X(fl.x)+Math.max(5,f.xExt/2*sx+3),Z((z1+z2)/2)-3);
+    ctx.restore();
+  });
+  $('sideHint').textContent=`Y = ${fmt(py,1)} mm (flaws off the line are faded)`;
+}
+function axes(ctx,x0,y0,x1,y1){ctx.strokeStyle='#2a3542';ctx.lineWidth=1;ctx.strokeRect(x0+0.5,y0+0.5,x1-x0,y1-y0);}
+
+/* ---------------- UT displays ---------------- */
+let lastAscan=null;
+function drawUTPrimary(){
+  const cv=$('cvPrim'), {ctx,w,h}=fitCanvas(cv), p=state.ut;
+  const A=computeAscan(state.scan.px,state.scan.py,8192,true); lastAscan=A;
+  const x0=44,y0=12,x1=w-14,y1=h-28, gain=Math.pow(10,p.gain/20);
+  axes(ctx,x0,y0,x1,y1);
+  ctx.fillStyle='#8c9aa8'; ctx.font='11px '+getComputedStyle(document.body).fontFamily;
+  const depthMax=A.tMax*A.P.c/2;
+  const step=depthMax>200?50:depthMax>80?20:depthMax>30?10:depthMax>12?5:1;
+  ctx.textAlign='center';
+  for(let d=0;d<=depthMax;d+=step){const x=x0+(d/depthMax)*(x1-x0);ctx.strokeStyle='#243040';ctx.beginPath();ctx.moveTo(x,y0);ctx.lineTo(x,y1);ctx.stroke();ctx.fillText(fmt(d,0),x,y1+14);}
+  ctx.fillText('sound path (mm, '+(p.mode==='T'?'shear':'longitudinal')+')',(x0+x1)/2,h-3);
+  ctx.textAlign='right';
+  const levels=p.rect?[0,25,50,75,100]:[-100,-50,0,50,100];
+  for(const L of levels){const y=p.rect?y1-(L/100)*(y1-y0):(y0+y1)/2-(L/100)*(y1-y0)/2;ctx.strokeStyle='#243040';ctx.beginPath();ctx.moveTo(x0,y);ctx.lineTo(x1,y);ctx.stroke();ctx.fillText(L+'%',x0-4,y+4);}
+  // trace
+  ctx.strokeStyle='#f5b54a'; ctx.lineWidth=1.2; ctx.beginPath();
+  const n=A.sig.length, W=x1-x0;
+  const yOf=v=>p.rect?y1-clamp(Math.abs(v)*gain,0,1)*(y1-y0):(y0+y1)/2-clamp(v*gain,-1,1)*(y1-y0)/2;
+  const cols=Math.floor(W);
+  for(let c=0;c<cols;c++){
+    const i0=Math.floor(c/cols*n), i1=Math.floor((c+1)/cols*n);
+    let mx=-1e9,mn=1e9,pk=0; for(let i=i0;i<i1;i++){const v=A.sig[i];if(v>mx)mx=v;if(v<mn)mn=v;if(Math.abs(v)>Math.abs(pk))pk=v;}
+    if(p.rect){const y=yOf(pk);if(c===0)ctx.moveTo(x0+c,y);else ctx.lineTo(x0+c,y);}
+    else{if(c===0)ctx.moveTo(x0+c,yOf(mx));ctx.lineTo(x0+c,yOf(mx));ctx.lineTo(x0+c,yOf(mn));}
+  }
+  ctx.stroke();
+  // echo labels
+  ctx.textAlign='center'; ctx.fillStyle='#7fd1e8';
+  for(const e of A.echoes){if(e.t<=0||Math.abs(e.amp)*gain<0.03)continue;const x=x0+(e.t/A.tMax)*W;const yv=yOf(p.rect?Math.abs(e.amp):Math.abs(e.amp));ctx.fillText(e.label,x,Math.max(y0+10,yv-6));}
+  $('primTitle').textContent='A-scan';
+  $('primLegend').textContent=`Gain ${p.gain} dB · ${p.rect?'full-wave rectified':'RF'} · echo amplitudes follow DGS-type distance–gain–size scaling; back-wall train shows multiple reflections.`;
+}
+function drawUTSecondary(){
+  const cv=$('cvSec'), {ctx,w,h}=fitCanvas(cv), p=state.ut, {Lx,T}=state.dims;
+  $('secTitle').textContent='B-scan along the section line';
+  if(!p.bscan){ctx.fillStyle='#8c9aa8';ctx.fillText('B-scan disabled (enable in the technique panel)',14,24);$('secLegend').textContent='';return;}
+  const x0=44,y0=12,x1=w-14,y1=h-28, cols=160, rows=220, gain=Math.pow(10,p.gain/20);
+  const img=ctx.createImageData(cols,rows);
+  let tMax=0, c=0;
+  for(let ci=0;ci<cols;ci++){
+    const px=(ci+0.5)/cols*Lx, A=computeAscan(px,state.scan.py,2048,true); tMax=A.tMax; c=A.P.c;
+    const n=A.sig.length;
+    for(let r=0;r<rows;r++){
+      const i0=Math.floor(r/rows*n), i1=Math.max(i0+1,Math.floor((r+1)/rows*n));
+      let pk=0; for(let i=i0;i<i1;i++) pk=Math.max(pk,Math.abs(A.sig[i]));
+      const v=clamp(pk*gain,0,1), k=(r*cols+ci)*4;
+      // colormap: dark → amber → white
+      img.data[k]=Math.round(255*Math.min(1,v*1.6)); img.data[k+1]=Math.round(255*Math.pow(v,1.3)*0.85); img.data[k+2]=Math.round(255*Math.max(0,v-0.6)*2.5+20*(1-v)); img.data[k+3]=255;
+    }
+  }
+  const off=document.createElement('canvas'); off.width=cols; off.height=rows; off.getContext('2d').putImageData(img,0,0);
+  ctx.imageSmoothingEnabled=true; ctx.drawImage(off,x0,y0,x1-x0,y1-y0); axes(ctx,x0,y0,x1,y1);
+  ctx.fillStyle='#8c9aa8'; ctx.font='11px '+getComputedStyle(document.body).fontFamily; ctx.textAlign='center';
+  const stepX=Lx>400?100:Lx>150?50:20; for(let x=0;x<=Lx;x+=stepX) ctx.fillText(x,x0+x/Lx*(x1-x0),y1+14);
+  ctx.fillText('probe X (mm)',(x0+x1)/2,h-3); ctx.textAlign='right';
+  const dMax=tMax*c/2, stepD=dMax>200?50:dMax>80?20:dMax>30?10:5; for(let d=0;d<=dMax;d+=stepD) ctx.fillText(fmt(d,0),x0-4,y0+d/dMax*(y1-y0)+4);
+  ctx.strokeStyle='#7fd1e8'; ctx.setLineDash([4,3]); ctx.beginPath(); const xp=x0+state.scan.px/Lx*(x1-x0); ctx.moveTo(xp,y0); ctx.lineTo(xp,y1); ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle='rgba(127,209,232,0.5)'; ctx.beginPath(); const yb=y0+T/dMax*(y1-y0); ctx.moveTo(x0,yb); ctx.lineTo(x1,yb); ctx.stroke();
+  $('secLegend').textContent='Envelope amplitude vs probe position (vertical axis = sound path in mm). Cyan line = current probe X; faint line = nominal back wall.';
+}
+
+/* ---------------- ECT displays ---------------- */
+function drawECTPrimary(){
+  const cv=$('cvPrim'), {ctx,w,h}=fitCanvas(cv), Q=ectParams();
+  $('primTitle').textContent='Impedance plane (calibrated display)';
+  if(!Q.applicable){ctx.fillStyle='#ff6b6b';ctx.font='13px '+getComputedStyle(document.body).fontFamily;ctx.fillText('Eddy-current testing is not applicable: the material is not electrically conductive.',14,26);$('primLegend').textContent='';return;}
+  const S=ectScan(Q), cx=w/2, cy=h*0.62, R=Math.min(w,h)*0.42;
+  let mx=1; for(let i=0;i<S.xs.length;i++) mx=Math.max(mx,Math.hypot(S.xs[i],S.ys[i]));
+  const sc=R/(mx*1.1);
+  ctx.strokeStyle='#243040'; ctx.beginPath(); ctx.moveTo(cx-R,cy); ctx.lineTo(cx+R,cy); ctx.moveTo(cx,cy-R); ctx.lineTo(cx,cy+R*0.5); ctx.stroke();
+  for(let k=1;k<=3;k++){ctx.beginPath();ctx.arc(cx,cy,R*k/3,0,2*PI);ctx.stroke();}
+  ctx.fillStyle='#8c9aa8'; ctx.font='11px '+getComputedStyle(document.body).fontFamily; ctx.textAlign='left';
+  ctx.fillText('lift-off / edge →',cx-R,cy+14); ctx.fillText('surface flaw (0° lag)',cx+6,cy-R+4); ctx.fillText(`ring spacing = ${fmt(mx*1.1/3,1)} units`,cx-R,cy+R*0.45);
+  // depth-lag ticks: 2z/δ clockwise from vertical
+  ctx.fillStyle='#5f6d7c';
+  for(const z of [0.25,0.5,1,1.5]){const ang=2*z; if(ang>PI*0.9)break; const x=cx+R*Math.sin(ang),y=cy-R*Math.cos(ang);ctx.fillText(`z=${z}δ`,x+3,y);}
+  ctx.strokeStyle='#f5b54a'; ctx.lineWidth=1.4; ctx.beginPath();
+  for(let i=0;i<S.xs.length;i++){const x=cx+S.xs[i]*sc,y=cy-S.ys[i]*sc;if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+  ctx.stroke();
+  const [px0,py0]=ectSignal(state.scan.px,state.scan.py,Q);
+  ctx.fillStyle='#7fd1e8'; ctx.beginPath(); ctx.arc(cx+px0*sc,cy-py0*sc,4,0,2*PI); ctx.fill();
+  $('primLegend').textContent=`Trace of the probe signal as the coil scans the section line at f = ${fmtHz(Q.f)}, δ = ${fmt(Q.delta,3)} mm. Phase lag ≈ 2z/δ rotates deeper flaws clockwise. Dot = current probe position.`;
+}
+function drawECTSecondary(){
+  const cv=$('cvSec'), {ctx,w,h}=fitCanvas(cv), Q=ectParams(), {Lx}=state.dims;
+  $('secTitle').textContent='Signal magnitude along the section line';
+  if(!Q.applicable){$('secLegend').textContent='';return;}
+  const S=ectScan(Q), x0=44,y0=12,x1=w-14,y1=h-28;
+  let mx=1; const mag=new Float32Array(S.xs.length); for(let i=0;i<mag.length;i++){mag[i]=Math.hypot(S.xs[i],S.ys[i]);mx=Math.max(mx,mag[i]);}
+  axes(ctx,x0,y0,x1,y1);
+  ctx.strokeStyle='#f5b54a'; ctx.lineWidth=1.4; ctx.beginPath();
+  for(let i=0;i<mag.length;i++){const x=x0+S.X[i]/Lx*(x1-x0),y=y1-(mag[i]/(mx*1.1))*(y1-y0);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+  ctx.stroke();
+  ctx.fillStyle='#8c9aa8'; ctx.font='11px '+getComputedStyle(document.body).fontFamily; ctx.textAlign='center';
+  const stepX=Lx>400?100:Lx>150?50:20; for(let x=0;x<=Lx;x+=stepX) ctx.fillText(x,x0+x/Lx*(x1-x0),y1+14);
+  ctx.fillText('probe X (mm)',(x0+x1)/2,h-3); ctx.textAlign='right'; ctx.fillText(fmt(mx*1.1,1),x0-4,y0+10); ctx.fillText('0',x0-4,y1);
+  ctx.strokeStyle='#7fd1e8'; ctx.setLineDash([4,3]); ctx.beginPath(); const xp=x0+state.scan.px/Lx*(x1-x0); ctx.moveTo(xp,y0); ctx.lineTo(xp,y1); ctx.stroke(); ctx.setLineDash([]);
+  state.flaws.forEach((fl,i)=>{if(!intersectsSection(fl,state.scan.py))return;ctx.fillStyle=flawColor(fl);ctx.textAlign='center';ctx.fillText(String(i+1),x0+fl.x/Lx*(x1-x0),y0+10);});
+  $('secLegend').textContent='|ΔZ| in relative units. Includes lift-off wobble, edge effect and (for ferromagnetic material) permeability noise.';
+}
+
+/* ---------------- RT displays ---------------- */
+let lastRT=null;
+function drawRTPrimary(){
+  const cv=$('cvPrim'), {ctx,w,h}=fitCanvas(cv), R=rtCompute(); lastRT=R;
+  $('primTitle').textContent='Radiograph (film convention: more exposure = darker)';
+  const img=ctx.createImageData(R.nx,R.ny);
+  for(let k=0;k<R.nx*R.ny;k++){const g=Math.round(255*(1-clamp((R.logN[k]-R.lo)/(R.hi-R.lo),0,1)));img.data[k*4]=g;img.data[k*4+1]=g;img.data[k*4+2]=g;img.data[k*4+3]=255;}
+  const off=document.createElement('canvas'); off.width=R.nx; off.height=R.ny; off.getContext('2d').putImageData(img,0,0);
+  const M=planMap(w,h,20); ctx.imageSmoothingEnabled=true; ctx.drawImage(off,M.X(0),M.Y(0),state.dims.Lx*M.s,state.dims.Ly*M.s);
+  ctx.strokeStyle='#4a5a6d'; ctx.strokeRect(M.X(0)+0.5,M.Y(0)+0.5,state.dims.Lx*M.s,state.dims.Ly*M.s);
+  ctx.save(); ctx.strokeStyle='#7fd1e8'; ctx.setLineDash([6,4]); ctx.beginPath(); ctx.moveTo(M.X(0),M.Y(state.scan.py)); ctx.lineTo(M.X(state.dims.Lx),M.Y(state.scan.py)); ctx.stroke(); ctx.restore();
+  state.flaws.forEach((fl,i)=>{ctx.fillStyle=flawColor(fl);ctx.font='11px '+getComputedStyle(document.body).fontFamily;ctx.fillText(String(i+1),M.X(fl.x)+footprint(fl).xExt/2*M.s+4,M.Y(fl.y)-4);});
+  $('primLegend').textContent=`Effective energy ${state.rt.E} keV · μ = ${fmt(R.muH,4)} /mm · nominal transmission ${fmt(100*R.Tnom,2)} % · Ug = ${fmt(R.Ug,3)} mm · pixel noise ${fmt(R.noisePct,2)} %. Grey scale auto-windowed to the image.`;
+}
+function drawRTSecondary(){
+  const cv=$('cvSec'), {ctx,w,h}=fitCanvas(cv), R=lastRT||rtCompute(), {Lx}=state.dims;
+  $('secTitle').textContent='Exposure profile along the section line';
+  const j=clamp(Math.floor(state.scan.py/R.pix),0,R.ny-1), x0=44,y0=12,x1=w-14,y1=h-28;
+  axes(ctx,x0,y0,x1,y1);
+  ctx.strokeStyle='#f5b54a'; ctx.lineWidth=1.2; ctx.beginPath();
+  for(let i=0;i<R.nx;i++){const v=clamp((R.logN[j*R.nx+i]-R.lo)/(R.hi-R.lo),0,1);const x=x0+(i+0.5)/R.nx*(x1-x0),y=y1-v*(y1-y0);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+  ctx.stroke();
+  ctx.fillStyle='#8c9aa8'; ctx.font='11px '+getComputedStyle(document.body).fontFamily; ctx.textAlign='center';
+  const stepX=Lx>400?100:Lx>150?50:20; for(let x=0;x<=Lx;x+=stepX) ctx.fillText(x,x0+x/Lx*(x1-x0),y1+14);
+  ctx.fillText('X (mm)',(x0+x1)/2,h-3); ctx.textAlign='right'; ctx.fillText(fmt(Math.pow(10,R.hi),0),x0-4,y0+10); ctx.fillText(fmt(Math.pow(10,R.lo),0),x0-4,y1);
+  $('secLegend').textContent='Detected photons per pixel (log scale, window limits on the axis). Voids and wall loss rise; dense inclusions dip; photon noise sets the detection floor.';
+}
+
+/* ---------------- MT / PT displays ---------------- */
+function drawSurfacePrimary(mode){
+  const cv=$('cvPrim'), {ctx,w,h}=fitCanvas(cv), M=planMap(w,h,20), {Lx,Ly}=state.dims;
+  const isMT=mode==='MT';
+  $('primTitle').textContent=isMT?'Magnetic-particle indications (dry black particles on white contrast paint)':'Penetrant indications (red dye on white developer)';
+  ctx.fillStyle=isMT?'#dfe3e6':'#f3f0ea'; ctx.fillRect(M.X(0),M.Y(0),Lx*M.s,Ly*M.s);
+  if(isMT){ // background particle texture
+    const r=rng(99); ctx.fillStyle='rgba(40,40,45,0.25)';
+    const n=Math.round(Lx*Ly*M.s*M.s/300); for(let k=0;k<n;k++){ctx.fillRect(M.X(r.u()*Lx),M.Y(r.u()*Ly),1,1);}
+  }
+  state.flaws.forEach((fl,i)=>{
+    const f=footprint(fl);
+    if(isMT){
+      const ind=mtIndication(fl); if(ind.vis<0.03) return;
+      ctx.save(); ctx.globalAlpha=Math.min(1,0.25+ind.vis); ctx.strokeStyle='#15171a'; ctx.fillStyle='#15171a'; ctx.lineCap='round';
+      const width=Math.max(2,(0.5+1.2*ind.vis)*M.s);
+      if(f.seg){ctx.lineWidth=width;ctx.beginPath();ctx.moveTo(M.X(f.ax),M.Y(f.ay));ctx.lineTo(M.X(f.bx),M.Y(f.by));ctx.stroke();}
+      else{ctx.beginPath();ctx.arc(M.X(f.cx),M.Y(f.cy),Math.max(3,(f.r+1)*M.s),0,2*PI);ctx.fill();}
+      ctx.restore();
+    }else{
+      const ind=ptIndication(fl); if(!ind.vis) return;
+      ctx.save(); ctx.strokeStyle='#c8102e'; ctx.fillStyle='#c8102e'; ctx.lineCap='round'; ctx.globalAlpha=0.9;
+      if(f.seg){ctx.lineWidth=Math.max(2,ind.bleed*M.s);ctx.beginPath();ctx.moveTo(M.X(f.ax),M.Y(f.ay));ctx.lineTo(M.X(f.bx),M.Y(f.by));ctx.stroke();}
+      else{ctx.beginPath();ctx.arc(M.X(f.cx),M.Y(f.cy),Math.max(3,(f.r+ind.bleed/2)*M.s),0,2*PI);ctx.fill();}
+      ctx.restore();
+    }
+    ctx.fillStyle='#3a4552'; ctx.font='11px '+getComputedStyle(document.body).fontFamily; ctx.fillText(String(i+1),M.X(fl.x)+f.xExt/2*M.s+4,M.Y(fl.y)-4);
+  });
+  ctx.strokeStyle='#4a5a6d'; ctx.strokeRect(M.X(0)+0.5,M.Y(0)+0.5,Lx*M.s,Ly*M.s);
+  $('primLegend').textContent=isMT?`Field along ${state.mt.dir}, ${state.mt.cur==='AC'?'AC (surface only)':'half-wave DC (a few mm of sub-surface reach)'}. Indication strength ∝ flux crossing the flaw × e^(−depth/reach).`:'Only surface-breaking discontinuities produce an indication; bleed-out width grows with entrapped volume.';
+}
+function drawSurfaceSecondary(){
+  const cv=$('cvSec'), {ctx,w,h}=fitCanvas(cv);
+  $('secTitle').textContent='Detectability by flaw';
+  ctx.font='12px '+getComputedStyle(document.body).fontFamily; let y=22;
+  state.flaws.forEach((fl,i)=>{
+    const ind=state.technique==='MT'?mtIndication(fl):ptIndication(fl);
+    const vis=state.technique==='MT'?ind.vis:ind.vis;
+    ctx.fillStyle=vis>0.3?'#7ad38f':vis>0.03?'#f5b54a':'#ff6b6b';
+    ctx.fillRect(14,y-9,10,10); ctx.fillStyle='#e6ebef';
+    ctx.fillText(`${flawLabel(fl,i)} — ${vis>0.3?'clear indication':vis>0.03?'weak indication':'no indication'}${ind.reason?': '+ind.reason:''}`,32,y);
+    y+=20;
+  });
+  $('secLegend').textContent='';
+}
+
+/* =========================================================
+   Readouts and assessment
+   ========================================================= */
+function readoutsAndNotes(){
+  const m=MAT(), {T}=state.dims, R=$('readout'), N=$('notes'), tech=state.technique, items=[], notes=[];
+  const add=(k,v)=>items.push(`<div><span>${k}</span><br><b>${v}</b></div>`);
+  const note=(cls,t)=>notes.push(`<li class="${cls}">${t}</li>`);
+  state.flaws.forEach((fl,i)=>{for(const iss of flawIssues(fl)) note('bad',`${flawLabel(fl,i)} ${iss} — fix its position or size.`);});
+  if(tech==='UT'){
+    const P=utParams(), A=lastAscan||computeAscan(state.scan.px,state.scan.py,2048,false);
+    add('Velocity',`${fmt(P.c*1000,0)} m/s (${state.ut.mode==='T'?'shear':'longitudinal'})`);
+    add('Wavelength λ',`${fmt(P.lam,3)} mm`); add('Near field N',`${fmt(P.N,1)} mm`);
+    add('−6 dB half angle',`${fmt(P.thetaB/D2R,2)}°`); add('Attenuation',`${fmt(P.alpha,3)} dB/mm`);
+    add('Acoustic impedance',`${fmt(P.Z,1)} MRayl`); add('Back-wall time',`${fmt(2*T/P.c,2)} µs`);
+    add('Dead zone ≈',`${fmt(P.sigmaT*2.2*4.5*P.c/2,2)} mm`);
+    for(const fi of A.flawInfo){
+      const i=state.flaws.indexOf(fi.fl);
+      if(!fi.inBeam){note('warn',`${flawLabel(fi.fl,i)}: outside the beam at this probe position (move the probe over it).`);continue;}
+      const dB=fi.ampdB, bw=20*Math.log10(Math.min(1,P.N/T)*Math.pow(10,-P.alpha*2*T/20));
+      let s=`${flawLabel(fi.fl,i)}: echo at ${fmt(fi.x,1)} mm, ${fmt(dB-bw,1)} dB relative to the back wall`;
+      if(fi.R!==undefined&&fi.fl.type==='incl') s+=` (R = ${fmt(fi.R,2)}, ${fi.R>0?'same polarity as the incident pulse':'inverted polarity'})`;
+      if(fi.note) s+=' — '+fi.note;
+      note(dB-bw>-40&&!fi.note?'ok':'warn',s+'.');
+    }
+    if(P.N>T) note('warn',`Near field (${fmt(P.N,1)} mm) exceeds the thickness: amplitudes in the near field are not monotonic with size — reduce frequency or crystal diameter.`);
+    if(state.ut.mode==='T'&&m.cT<1200) note('warn','Shear waves are very strongly attenuated in polymers; contact shear probes are impractical here.');
+    if(P.alpha*2*T>40) note('bad',`Two-way attenuation ${fmt(P.alpha*2*T,0)} dB: back wall is lost in noise — lower the frequency.`);
+    if(m.id==='cfrp') note('warn','Composite: use ≤ 5 MHz; the anisotropic laminate also produces ply-interface reverberations not modelled here.');
+  }else if(tech==='ECT'){
+    const Q=ectParams();
+    add('Frequency',fmtHz(Q.f)); add('Conductivity',`${fmt(m.sigma/5.8e7*100,1)} % IACS`); add('μr (incremental)',m.mur);
+    add('Standard depth δ',Q.applicable?`${fmt(Q.delta,3)} mm`:'—'); add('3δ (practical reach)',Q.applicable?`${fmt(3*Q.delta,2)} mm`:'—');
+    add('Lift-off sensitivity factor',fmt(Q.liftSens,2));
+    if(!Q.applicable){note('bad','Material is an insulator — eddy currents cannot be induced. Use UT, RT or PT.');}
+    else{
+      if(m.ferro) note('warn',`Ferromagnetic (μr ≈ ${m.mur}): δ is tiny and permeability variations add noise. Magnetic-particle testing is usually preferred for surface cracks.`);
+      state.flaws.forEach((fl,i)=>{
+        const [z1]=depthRange(fl,T);
+        if(fl.type==='wallLoss'){ if(T-fl.h>3*Q.delta) note('warn',`${flawLabel(fl,i)}: remaining wall ${fmt(T-fl.h,1)} mm > 3δ — back-face thinning is invisible at this frequency; lower f to reach it.`); else note('ok',`${flawLabel(fl,i)}: remaining wall within 3δ — detectable as a phase-rotated signal.`); return;}
+        if(z1>3*Q.delta) note('bad',`${flawLabel(fl,i)}: top at ${fmt(z1,2)} mm is deeper than 3δ = ${fmt(3*Q.delta,2)} mm — not detectable; lower the frequency.`);
+        else if(fl.type==='crack'&&fl.tilt<20) note('warn',`${flawLabel(fl,i)}: laminar (near-horizontal) — barely interrupts the circulating eddy currents.`);
+        else if(fl.type==='incl'&&Math.abs((m.sigma-INCL[fl.imat].sigma)/Math.max(m.sigma,INCL[fl.imat].sigma))<0.3) note('warn',`${flawLabel(fl,i)}: conductivity contrast with the host is small — weak signal.`);
+        else note('ok',`${flawLabel(fl,i)}: within reach; expected phase lag ≈ ${fmt(2*z1/Q.delta/D2R,0)}° beyond a surface flaw.`);
+      });
+      state.flaws.forEach((fl,i)=>{if(effOff(fl,state.scan.px,state.scan.py)>state.ect.Dc)note('warn',`${flawLabel(fl,i)}: outside the coil footprint at the current probe position.`);});
+    }
+  }else if(tech==='RT'){
+    const Rt=lastRT||rtCompute();
+    add('Linear attenuation μ',`${fmt(Rt.muH,4)} /mm`); add('Half-value layer',`${fmt(LN2/Rt.muH,2)} mm`);
+    add('Nominal transmission',`${fmt(100*Rt.Tnom,3)} %`); add('Contrast per mm of thickness',`${fmt(100*(1-Math.exp(-Rt.muH)),2)} %`);
+    add('Geometric unsharpness Ug',`${fmt(Rt.Ug,3)} mm`); add('Pixel photon noise',`${fmt(Rt.noisePct,2)} %`);
+    if(Rt.Tnom<0.01) note('bad','Transmission below 1 %: the exposure is far too hard to read — raise the energy or exposure, or reduce thickness.');
+    if(100*(1-Math.exp(-Rt.muH))<1) note('warn','Very low subject contrast: the beam is too energetic for this thickness; lower the kV for better contrast.');
+    for(const fc of Rt.flawC){
+      const i=state.flaws.indexOf(fc.fl), snr=fc.contrast/Math.max(Rt.noisePct,1e-6);
+      let s=`${flawLabel(fc.fl,i)}: peak subject contrast ${fmt(fc.contrast,2)} % vs noise ${fmt(Rt.noisePct,2)} % (SNR ≈ ${fmt(snr,1)})`;
+      if(fc.fl.type==='crack'){const f=footprint(fc.fl); if(f.Wf<Rt.Ug) s+=` — opening ${fmt(f.Wf,2)} mm is narrower than Ug ${fmt(Rt.Ug,2)} mm, blurred away`; if(fc.fl.tilt<45) s+=' — planar flaw not aligned with the beam: minimal path difference';}
+      note(snr>3?'ok':'warn',s+'.');
+    }
+  }else if(tech==='MT'){
+    add('Ferromagnetic',m.ferro?'yes':'no'); add('Field direction',state.mt.dir); add('Current',state.mt.cur==='AC'?'AC (skin-limited)':'half-wave DC');
+    if(!m.ferro) note('bad','Material is not ferromagnetic — MT is not applicable. Use PT for surface flaws or ECT/UT for sub-surface ones.');
+    state.flaws.forEach((fl,i)=>{const ind=mtIndication(fl);if(ind.vis>0.3)note('ok',`${flawLabel(fl,i)}: clear indication.`);else note(ind.vis>0.03?'warn':'bad',`${flawLabel(fl,i)}: ${ind.vis>0.03?'weak':'no'} indication${ind.reason?' — '+ind.reason:''}.`);});
+    if(m.ferro) note('warn','Rotate the field 90° and inspect again — cracks parallel to the flux are missed.');
+  }else{
+    add('Applicable',m.id==='cfrp'?'yes (non-porous laminate)':'yes');
+    state.flaws.forEach((fl,i)=>{const ind=ptIndication(fl);note(ind.vis?'ok':'bad',`${flawLabel(fl,i)}: ${ind.vis?`indication, bleed-out ≈ ${fmt(ind.bleed,1)} mm wide`:'no indication — '+ind.reason}.`);});
+  }
+  R.innerHTML=items.join(''); N.innerHTML=notes.join('')||'<li class="ok">No issues.</li>';
+}
+
+/* =========================================================
+   UI construction
+   ========================================================= */
+function rangeRow(label,path,min,max,step,fmtFn){
+  const v=getPath(path);
+  return `<div class="rng"><label>${label}</label><output data-out="${path}">${fmtFn(v)}</output></div><input type="range" data-path="${path}" min="${min}" max="${max}" step="${step}" value="${v}">`;
+}
+function selectRow(label,path,opts){
+  const v=getPath(path);
+  return `<label>${label}</label><select data-path="${path}">${opts.map(o=>`<option value="${o[0]}" ${o[0]===v?'selected':''}>${o[1]}</option>`).join('')}</select>`;
+}
+function checkRow(label,path){return `<label style="display:flex;gap:6px;align-items:center;color:var(--ink)"><input type="checkbox" data-path="${path}" ${getPath(path)?'checked':''} style="width:auto">${label}</label>`;}
+function getPath(p){const [a,b]=p.split('.');return state[a][b];}
+function setPath(p,v){const [a,b]=p.split('.');state[a][b]=v;}
+const TECH_FMT={
+  'ut.f':v=>fmt(v,1)+' MHz','ut.D':v=>fmt(v,0)+' mm','ut.gain':v=>fmt(v,0)+' dB',
+  'ect.logf':v=>fmtHz(Math.pow(10,v)),'ect.Dc':v=>fmt(v,0)+' mm','ect.lift':v=>fmt(v,2)+' mm','ect.wobble':v=>fmt(v,3)+' mm rms',
+  'rt.E':v=>fmt(v,0)+' keV','rt.logN':v=>'10^'+fmt(v,1)+' photons/pixel','rt.F':v=>fmt(v,1)+' mm','rt.SOD':v=>fmt(v,0)+' mm',
+};
+function buildTechPanel(){
+  const t=state.technique, el=$('techPanel'); let html='';
+  if(t==='UT'){
+    html+=rangeRow('Frequency','ut.f',0.5,15,0.5,TECH_FMT['ut.f'])+rangeRow('Crystal diameter','ut.D',3,25,1,TECH_FMT['ut.D']);
+    html+=selectRow('Wave mode','ut.mode',[['L','Longitudinal (compression)'],['T','Shear (normal-incidence contact)']]);
+    html+=rangeRow('Gain','ut.gain',-20,80,1,TECH_FMT['ut.gain']);
+    html+='<div class="row2" style="margin-top:6px">'+checkRow('Rectified','ut.rect')+checkRow('B-scan','ut.bscan')+'</div>';
+  }else if(t==='ECT'){
+    html+=rangeRow('Test frequency','ect.logf',3,6.7,0.05,TECH_FMT['ect.logf'])+rangeRow('Coil diameter','ect.Dc',2,20,1,TECH_FMT['ect.Dc']);
+    html+=rangeRow('Nominal lift-off','ect.lift',0,2,0.05,TECH_FMT['ect.lift'])+rangeRow('Lift-off wobble','ect.wobble',0,0.2,0.005,TECH_FMT['ect.wobble']);
+  }else if(t==='RT'){
+    html+=rangeRow('Effective photon energy','rt.E',60,450,5,TECH_FMT['rt.E'])+rangeRow('Exposure','rt.logN',2,6.5,0.1,TECH_FMT['rt.logN']);
+    html+=rangeRow('Focal spot','rt.F',0.1,5,0.1,TECH_FMT['rt.F'])+rangeRow('Source-to-object distance','rt.SOD',200,1500,10,TECH_FMT['rt.SOD']);
+    html+='<div class="props">Effective energy ≈ 40–50 % of the tube kVp for a filtered bremsstrahlung spectrum.</div>';
+  }else if(t==='MT'){
+    html+=selectRow('Yoke field direction','mt.dir',[['X','Along X'],['Y','Along Y']])+selectRow('Magnetising current','mt.cur',[['AC','AC — surface only'],['HWDC','Half-wave DC — sub-surface reach']]);
+  }else{
+    html+='<div class="props">Visible-dye penetrant, solvent-removable, non-aqueous developer. No parameters: detectability depends only on whether the flaw breaks the inspected surface.</div>';
+  }
+  el.innerHTML=html;
+}
+function buildMaterialSelect(){
+  $('material').innerHTML=MATERIALS.map(m=>`<option value="${m.id}" ${m.id===state.matId?'selected':''}>${m.name}</option>`).join('');
+}
+function updateMatProps(){
+  const m=MAT();
+  $('matProps').innerHTML=`ρ <b>${m.rho}</b> kg/m³ · c<sub>L</sub> <b>${m.cL}</b> m/s · c<sub>T</sub> <b>${m.cT}</b> m/s<br>σ <b>${m.sigma<1?'insulator':fmt(m.sigma,2)+' S/m'}</b> · μ<sub>r</sub> <b>${m.mur}</b> · ${m.ferro?'<b>ferromagnetic</b>':'non-magnetic'}<br>α(5 MHz) <b>${m.att5}</b> dB/mm · X-ray μ/ρ from <b>${m.xcom}</b> table`;
+}
+const FLAW_FIELDS={
+  crack:[['x','X centre'],['y','Y centre'],['z','Depth of top'],['L','Length'],['H','Height'],['w','Opening'],['az','Azimuth °'],['tilt','Tilt ° (0–90)']],
+  void:[['x','X centre'],['y','Y centre'],['z','Depth of centre'],['D','Diameter']],
+  incl:[['x','X centre'],['y','Y centre'],['z','Depth of centre'],['D','Diameter']],
+  wallLoss:[['x','X centre'],['y','Y centre'],['d','Pit diameter'],['h','Max depth from back']],
+};
+const FLAW_HINT={crack:'Planar. Depth 0 = surface-breaking. Azimuth: in-plane direction of the length. Tilt: 0 = laminar (parallel to the surface), 90 = vertical.',void:'Spherical gas pore. Depth measured from the top surface to its centre.',incl:'Spherical foreign particle; contrast depends on its density, impedance and conductivity relative to the host.',wallLoss:'Paraboloid pit on the back (far) surface — corrosion or erosion.'};
+function newFlaw(type){
+  const {Lx,Ly,T}=state.dims, base={id:++fid,type,x:Math.round(Lx/2),y:Math.round(Ly/2)};
+  if(type==='crack') Object.assign(base,{z:0,L:6,H:2,w:0.05,az:90,tilt:90});
+  if(type==='void') Object.assign(base,{z:Math.round(T/2*10)/10,D:1.5});
+  if(type==='incl') Object.assign(base,{z:Math.round(T/2*10)/10,D:1.5,imat:'tungsten'});
+  if(type==='wallLoss') Object.assign(base,{d:10,h:Math.round(T*0.2*10)/10});
+  return base;
+}
+function buildFlawList(){
+  $('flawList').innerHTML=state.flaws.map((fl,i)=>{
+    const fields=FLAW_FIELDS[fl.type].map(([k,lab])=>`<div><label>${lab}</label><input type="number" step="${k==='w'?0.01:k==='az'||k==='tilt'?1:0.1}" data-fid="${fl.id}" data-key="${k}" value="${fl[k]}"></div>`).join('');
+    const imat=fl.type==='incl'?`<label>Inclusion material</label><select data-fid="${fl.id}" data-key="imat">${Object.entries(INCL).map(([k,v])=>`<option value="${k}" ${fl.imat===k?'selected':''}>${v.name}</option>`).join('')}</select>`:'';
+    return `<div class="flaw ${state.sel===fl.id?'sel':''}" data-card="${fl.id}" style="border-left-color:${flawColor(fl)}">
+      <div class="head"><b>${i+1}.</b><select data-fid="${fl.id}" data-key="type">${['crack','void','incl','wallLoss'].map(t=>`<option value="${t}" ${fl.type===t?'selected':''}>${{crack:'Crack',void:'Void',incl:'Inclusion',wallLoss:'Wall loss'}[t]}</option>`).join('')}</select><button class="danger" data-del="${fl.id}" title="Remove">×</button></div>
+      <div class="row">${fields}</div>${imat}<div class="hint">${FLAW_HINT[fl.type]}</div></div>`;
+  }).join('')||'<div class="props">No flaws — the part is sound. Add one above.</div>';
+}
+function physicsNotes(){
+  $('physicsNotes').innerHTML=`
+  <p><b>Ultrasonic:</b> piston-source far-field model. Near field N = D²/4λ, −6 dB half angle sin θ = 0.51 λ/D. Echo amplitudes follow DGS scaling — plane reflector ∝ N/x, disc-equivalent flaw ∝ (N/x)·A/(λx), sphere ∝ (N/x)·D/(4x) — capped at the back-wall level. Reflection coefficient R = (Z₂−Z₁)/(Z₂+Z₁) (−1 for air-backed). Attenuation α(f) = α₅·(f/5 MHz)² plus grain-noise backscatter scaled to α. Tilted faces lose specular return as exp(−ln2·(θ/θ₋₆dB)²); an edge/tip term ∝ L·(w+0.1λ) remains. Not modelled: mode conversion, angle beams, surface waves, anisotropy.</p>
+  <p><b>Eddy current:</b> δ = 1/√(π f μ₀ μr σ). Flaw signal ∝ ∫e<sup>−2(1+i)z/δ</sup>dz over the flaw depth extent (attenuation and phase lag, in and out), times the fraction of the coil footprint it interrupts and a conductivity-contrast factor for inclusions. Display is the calibrated impedance plane (lift-off horizontal). Not modelled: coil geometry effects on absolute impedance, ferrite-core focusing, differential probes.</p>
+  <p><b>Radiography:</b> Beer–Lambert I = I₀e<sup>−μt</sup> with μ/ρ interpolated log–log from NIST XCOM (mono-energetic at the chosen effective energy; tungsten clamped above its K-edge). Geometric unsharpness Ug = F·t/SOD, applied as Gaussian blur; Poisson photon noise. Not modelled: scatter/build-up, beam hardening, film characteristic curve, IQI wires.</p>
+  <p><b>Magnetic particle:</b> leakage ∝ |sin(angle between crack and flux)| × e<sup>−depth/reach</sup> with reach 0.8 mm (AC) or 2.5 mm (HWDC), scaled by the flaw's vertical extent. <b>Penetrant:</b> only surface-breaking flaws; bleed-out width scales with entrapped volume per unit length.</p>
+  <p>Material constants are handbook-typical values at room temperature; treat outputs as engineering estimates for technique selection and parameter studies, not as a substitute for a calibrated reference block.</p>`;
+}
+
+/* =========================================================
+   Events
+   ========================================================= */
+let raf=0;
+function redraw(){ if(raf) return; raf=requestAnimationFrame(()=>{raf=0; render();}); }
+function render(){
+  const t=state.technique;
+  drawTop(); drawSide();
+  if(t==='UT'){drawUTPrimary();drawUTSecondary();}
+  else if(t==='ECT'){drawECTPrimary();drawECTSecondary();}
+  else if(t==='RT'){drawRTPrimary();drawRTSecondary();}
+  else{drawSurfacePrimary(t);drawSurfaceSecondary();}
+  readoutsAndNotes();
+}
+function syncInputs(){
+  $('dimLx').value=state.dims.Lx; $('dimLy').value=state.dims.Ly; $('dimT').value=state.dims.T;
+  $('scanX').value=fmt(state.scan.px,1); $('scanY').value=fmt(state.scan.py,1);
+}
+$('technique').addEventListener('change',e=>{state.technique=e.target.value;buildTechPanel();redraw();});
+$('material').addEventListener('change',e=>{state.matId=e.target.value;updateMatProps();redraw();});
+$('techPanel').addEventListener('input',e=>{
+  const p=e.target.dataset.path; if(!p) return;
+  const v=e.target.type==='checkbox'?e.target.checked:e.target.type==='range'?parseFloat(e.target.value):e.target.value;
+  setPath(p,v); const out=$('techPanel').querySelector(`[data-out="${p}"]`); if(out&&TECH_FMT[p]) out.textContent=TECH_FMT[p](v);
+  redraw();
+});
+$('techPanel').addEventListener('change',e=>{const p=e.target.dataset.path;if(p&&e.target.tagName==='SELECT'){setPath(p,e.target.value);redraw();}});
+for(const [id,key,min,max] of [['dimLx','Lx',10,1000],['dimLy','Ly',10,1000],['dimT','T',1,300]]){
+  $(id).addEventListener('change',e=>{const v=parseFloat(e.target.value);if(!Number.isFinite(v))return;state.dims[key]=clamp(v,min,max);e.target.value=state.dims[key];
+    state.scan.px=clamp(state.scan.px,0,state.dims.Lx);state.scan.py=clamp(state.scan.py,0,state.dims.Ly);syncInputs();redraw();});
+}
+$('scanX').addEventListener('change',e=>{const v=parseFloat(e.target.value);if(Number.isFinite(v)){state.scan.px=clamp(v,0,state.dims.Lx);syncInputs();redraw();}});
+$('scanY').addEventListener('change',e=>{const v=parseFloat(e.target.value);if(Number.isFinite(v)){state.scan.py=clamp(v,0,state.dims.Ly);syncInputs();redraw();}});
+$('addFlaw').addEventListener('click',()=>{const f=newFlaw($('newFlawType').value);state.flaws.push(f);state.sel=f.id;buildFlawList();redraw();});
+$('flawList').addEventListener('input',e=>{
+  const id=parseInt(e.target.dataset.fid,10), key=e.target.dataset.key; if(!key||e.target.tagName==='SELECT') return;
+  const fl=state.flaws.find(f=>f.id===id); if(!fl) return;
+  const v=parseFloat(e.target.value); if(!Number.isFinite(v)) return;
+  const positive=['L','H','w','D','d','h'];
+  fl[key]=positive.includes(key)?Math.max(0.001,v):key==='z'?Math.max(0,v):v;
+  redraw();
+});
+$('flawList').addEventListener('change',e=>{
+  const id=parseInt(e.target.dataset.fid,10), key=e.target.dataset.key; if(!key||e.target.tagName!=='SELECT') return;
+  const idx=state.flaws.findIndex(f=>f.id===id); if(idx<0) return;
+  if(key==='type'){const old=state.flaws[idx];const nf=newFlaw(e.target.value);nf.id=old.id;nf.x=old.x;nf.y=old.y;state.flaws[idx]=nf;buildFlawList();}
+  else{state.flaws[idx][key]=e.target.value;}
+  redraw();
+});
+$('flawList').addEventListener('click',e=>{
+  const del=e.target.dataset.del; if(del){state.flaws=state.flaws.filter(f=>f.id!==parseInt(del,10));if(state.sel===parseInt(del,10))state.sel=null;buildFlawList();redraw();return;}
+  const card=e.target.closest('[data-card]'); if(card){const id=parseInt(card.dataset.card,10);if(state.sel!==id){state.sel=id;buildFlawList();redraw();}}
+});
+// plan-view dragging
+(function(){
+  const cv=$('cvTop'); let drag=null;
+  const toMM=ev=>{const r=cv.getBoundingClientRect(),M=planMap(r.width,parseInt(cv.getAttribute('height'),10));return {x:(ev.clientX-r.left-M.ox)/M.s,y:(ev.clientY-r.top-M.oy)/M.s,M};};
+  cv.addEventListener('pointerdown',ev=>{
+    const {x,y,M}=toMM(ev), t=state.technique; cv.setPointerCapture(ev.pointerId);
+    let hit=null, best=10/M.s;
+    for(const fl of state.flaws){const d=Math.hypot(fl.x-x,fl.y-y);if(d<best){best=d;hit=fl;}}
+    const probeR=(t==='UT'?state.ut.D:t==='ECT'?state.ect.Dc:8)/2;
+    if((t==='UT'||t==='ECT'||t==='MT')&&Math.hypot(state.scan.px-x,state.scan.py-y)<Math.max(probeR,6/M.s)) drag={kind:'probe'};
+    else if(hit){drag={kind:'flaw',fl:hit,dx:hit.x-x,dy:hit.y-y};if(state.sel!==hit.id){state.sel=hit.id;buildFlawList();}}
+    else {drag={kind:'probe'};}
+    move(ev);
+  });
+  function move(ev){
+    if(!drag) return; const {x,y}=toMM(ev), {Lx,Ly}=state.dims;
+    if(drag.kind==='probe'){state.scan.px=clamp(x,0,Lx);state.scan.py=clamp(y,0,Ly);syncInputs();}
+    else{drag.fl.x=Math.round(clamp(x+drag.dx,0,Lx)*10)/10;drag.fl.y=Math.round(clamp(y+drag.dy,0,Ly)*10)/10;
+      const card=$('flawList').querySelector(`[data-card="${drag.fl.id}"]`); if(card){card.querySelector('[data-key="x"]').value=drag.fl.x;card.querySelector('[data-key="y"]').value=drag.fl.y;}}
+    redraw();
+  }
+  cv.addEventListener('pointermove',move);
+  cv.addEventListener('pointerup',()=>{drag=null;}); cv.addEventListener('pointercancel',()=>{drag=null;});
+  cv.style.cursor='crosshair';
+})();
+window.addEventListener('resize',redraw);
+
+/* init */
+buildMaterialSelect(); updateMatProps(); buildTechPanel(); buildFlawList(); physicsNotes(); syncInputs(); render();
+</script>
+</body>
+</html>
